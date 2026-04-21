@@ -1,0 +1,36 @@
+# golangci-lint configuration for the Payment Gateway.
+# Enforces the engineering standards documented in docs/engineering-standards.md.
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck       # Check that errors are handled
+    - govet          # Go vet checks
+    - ineffassign    # Detect ineffectual assignments
+    - staticcheck    # Advanced static analysis
+    - unused         # Detect unused code (zero dead code policy)
+    - gosimple       # Simplify code
+    - goconst        # Find repeated strings that should be constants
+    - gofmt          # Enforce standard formatting
+    - misspell       # Catch spelling errors in comments
+    - unconvert      # Remove unnecessary type conversions
+    - unparam        # Find unused function parameters
+    - bodyclose      # Check HTTP response bodies are closed
+    - exportloopref  # Detect loop variable capture bugs
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  errcheck:
+    check-type-assertions: true
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+issues:
+  # Do not skip any files — every file must pass.
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
