@@ -26,3 +26,4 @@ coverage.out
 # AI Assistants
 .agent/
 .scratch/
+mockbnc
