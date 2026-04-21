@@ -1,0 +1,328 @@
+openapi: 3.0.3
+info:
+  title: Payment Gateway API
+  description: |
+    BYOC (Bring Your Own Credentials) Payment Gateway for Venezuelan banks.
+    Processes C2P (Cobro a Persona) transactions through a unified REST API.
+    
+    ## Authentication
+    All endpoints under `/v1/` require a Bearer API key in the `Authorization` header.
+    
+    ## Idempotency
+    All `POST` endpoints require an `Idempotency-Key` header. Duplicate requests
+    with the same key return the cached response without re-processing.
+  version: 1.0.0
+  contact:
+    name: Payment Gateway Support
+
+servers:
+  - url: https://gateway.example.com
+    description: Production
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns 200 if the service is operational. Used by Cloud Run for liveness probes.
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: payment-gateway
+
+  /v1/charges/c2p:
+    post:
+      summary: Create a C2P charge
+      description: |
+        Initiates a Cobro a Persona (C2P) charge through the Venezuelan Pago Móvil network.
+        The gateway routes the transaction to the appropriate bank adapter based on `payer.bank_code`.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique key to prevent duplicate charges
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/C2PChargeRequest'
+      responses:
+        '200':
+          description: Charge processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/C2PChargeResponse'
+        '202':
+          description: Charge is pending reconciliation (ambiguous bank response)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/C2PChargeResponse'
+        '422':
+          description: Charge was declined by the bank
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/C2PChargeResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/transactions/{id}:
+    get:
+      summary: Get transaction details
+      description: Retrieves the current status and details of a transaction.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Transaction UUID
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '404':
+          description: Transaction not found or belongs to another merchant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/webhooks/bnc:
+    post:
+      summary: BNC push notification receiver
+      description: |
+        Receives payment notifications from BNC (Banco Nacional de Crédito).
+        Always responds 200 immediately per BNC specification.
+        
+        **This endpoint is called by BNC, not by merchants.**
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BNCWebhookNotification'
+      responses:
+        '200':
+          description: Notification received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: received
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: API key provided during merchant onboarding
+
+  schemas:
+    C2PChargeRequest:
+      type: object
+      required: [amount, payer, idempotency_key]
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          example: 250.00
+          description: Amount in VES
+        currency:
+          type: string
+          default: VES
+          example: VES
+          description: ISO 4217 currency code (only VES supported)
+        payer:
+          type: object
+          required: [bank_code, phone, id_document, otp]
+          properties:
+            bank_code:
+              type: string
+              pattern: '^\d{4}$'
+              example: "0191"
+              description: SUDEBAN 4-digit bank code
+            phone:
+              type: string
+              example: "04141234567"
+              description: Payer's phone registered in Pago Móvil
+            id_document:
+              type: string
+              example: "V12345678"
+              description: Payer's ID (V/E/J/G + number)
+            otp:
+              type: string
+              example: "A4H9B2"
+              description: One-time password from payer's banking app
+        idempotency_key:
+          type: string
+          maxLength: 255
+          example: "order-abc-123-attempt-1"
+          description: Client-generated unique key to prevent duplicates
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            order_id: "padel-reservation-123"
+            description: "Cancha 3 - 8:00 PM"
+
+    C2PChargeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Gateway transaction ID
+        status:
+          $ref: '#/components/schemas/TransactionStatus'
+        bank_reference:
+          type: string
+          description: Reference number from the bank (on success)
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+        error:
+          $ref: '#/components/schemas/ChargeError'
+        created_at:
+          type: string
+          format: date-time
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        merchant_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+        bank_code:
+          type: string
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+        status:
+          $ref: '#/components/schemas/TransactionStatus'
+        bank_reference:
+          type: string
+        error_code:
+          type: string
+        error_message:
+          type: string
+        initiated_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    TransactionStatus:
+      type: string
+      enum:
+        - INITIATED
+        - PROCESSING
+        - SUCCESS
+        - DECLINED
+        - BANK_NETWORK_ERROR
+        - PENDING_RECONCILIATION
+
+    ChargeError:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Gateway-standard error code
+          example: INCORRECT_OTP
+        message:
+          type: string
+          description: Human-readable error description
+          example: The OTP provided is incorrect or expired
+        bank_code:
+          type: string
+          description: Raw error code from the bank
+          example: G55
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: invalid JSON body
+
+    BNCWebhookNotification:
+      type: object
+      properties:
+        PaymentType:
+          type: string
+          enum: [P2P, TRF, DEP]
+        OriginBankReference:
+          type: string
+        DestinyBankReference:
+          type: string
+        OriginBankCode:
+          type: string
+        Amount:
+          type: string
+        Date:
+          type: string
+        Hour:
+          type: string
+        CommerceID:
+          type: string
+        CommercePhone:
+          type: string
