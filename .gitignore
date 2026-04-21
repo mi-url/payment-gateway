@@ -22,3 +22,7 @@ coverage.out
 
 # macOS resource forks
 ._*
+
+# AI Assistants
+.agent/
+.scratch/
