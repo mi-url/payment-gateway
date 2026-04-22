@@ -8,93 +8,181 @@ import {
   Settings,
   KeyRound,
   Building2,
-  ChevronLeft,
+  LogOut,
+  User,
+  ChevronsUpDown,
+  Terminal,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
+
+import {
+  Sidebar as ShadcnSidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/transactions", label: "Transactions", icon: ArrowLeftRight },
+  { href: "/dashboard/developers", label: "Developers", icon: Terminal },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  const { isMobile } = useSidebar();
+  const [email, setEmail] = useState<string>("merchant@example.com");
+
+  useEffect(() => {
+    async function getUser() {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.email) {
+        setEmail(user.email);
+      }
+    }
+    getUser();
+  }, []);
+
+  const handleLogout = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  };
 
   return (
-    <aside
-      className={`fixed left-0 top-0 h-screen flex flex-col transition-all duration-300 ease-in-out z-50 ${
-        collapsed ? "w-[72px]" : "w-[260px]"
-      }`}
-      style={{
-        background: "var(--bg-secondary)",
-        borderRight: "1px solid var(--border)",
-      }}
-    >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-5 h-16 border-b border-[var(--border)]">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{ background: "var(--accent)" }}
-        >
-          <Building2 size={18} color="white" />
-        </div>
-        {!collapsed && (
-          <div className="overflow-hidden">
-            <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-              Payment Gateway
+    <ShadcnSidebar variant="sidebar" collapsible="icon">
+      <SidebarHeader className="border-b border-border/50 py-4 h-16">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" render={<Link href="/dashboard" />} className="hover:bg-transparent">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <Building2 className="size-4" />
+              </div>
+              <div className="flex flex-col gap-0.5 leading-none">
+                <span className="font-semibold text-foreground">Payment Gateway</span>
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Dashboard</span>
+              </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu className="mt-4 gap-2">
+              {navItems.map((item) => {
+                const isActive = pathname === item.href;
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      render={<Link href={item.href} />}
+                      isActive={isActive}
+                      tooltip={item.label}
+                      className={
+                        isActive 
+                          ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary" 
+                          : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      }
+                    >
+                      <item.icon className="size-4" />
+                      <span className="font-medium">{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="border-t border-border/50 pb-4">
+        {/* Help / Hint Card - only visible when expanded */}
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+          <div className="mx-2 mb-2 p-3 rounded-xl bg-secondary/50 border border-border/50">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="p-1 rounded-md bg-primary/10">
+                <KeyRound className="size-3.5 text-primary" />
+              </div>
+              <span className="text-[11px] font-semibold text-foreground uppercase tracking-wider">Live API Key</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Use your API key to process production payments.
             </p>
-            <p className="text-xs text-[var(--text-muted)]">Dashboard</p>
           </div>
-        )}
-      </div>
+        </SidebarGroup>
 
-      {/* Navigation */}
-      <nav className="flex-1 py-4 px-3 space-y-1">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                isActive
-                  ? "text-white"
-                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-              }`}
-              style={isActive ? { background: "var(--accent)" } : undefined}
-            >
-              <item.icon size={18} className="flex-shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* API Key hint */}
-      {!collapsed && (
-        <div className="mx-3 mb-3 p-3 rounded-lg" style={{ background: "var(--bg-card)" }}>
-          <div className="flex items-center gap-2 mb-1">
-            <KeyRound size={14} className="text-[var(--accent)]" />
-            <span className="text-xs font-medium text-[var(--text-primary)]">API Key</span>
-          </div>
-          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
-            Use your API key to integrate payments into your app.
-          </p>
-        </div>
-      )}
-
-      {/* Collapse toggle */}
-      <button
-        onClick={() => setCollapsed(!collapsed)}
-        className="flex items-center justify-center h-12 border-t border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-      >
-        <ChevronLeft
-          size={18}
-          className={`transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`}
-        />
-      </button>
-    </aside>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={
+                <SidebarMenuButton
+                  size="lg"
+                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                >
+                  <Avatar className="h-8 w-8 rounded-lg">
+                    <AvatarFallback className="rounded-lg bg-primary/10 text-primary">
+                      {email.substring(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-semibold text-foreground">Merchant</span>
+                    <span className="truncate text-xs text-muted-foreground">{email}</span>
+                  </div>
+                  <ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
+                </SidebarMenuButton>
+              } />
+              <DropdownMenuContent
+                className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg bg-card border-border/50"
+                side={isMobile ? "bottom" : "right"}
+                align="end"
+                sideOffset={4}
+              >
+                <div className="p-0 font-normal">
+                  <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                    <Avatar className="h-8 w-8 rounded-lg">
+                      <AvatarFallback className="rounded-lg bg-primary/10 text-primary">
+                        {email.substring(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="grid flex-1 text-left text-sm leading-tight">
+                      <span className="truncate font-semibold text-foreground">Merchant</span>
+                      <span className="truncate text-xs text-muted-foreground">{email}</span>
+                    </div>
+                  </div>
+                </div>
+                <DropdownMenuSeparator className="bg-border/50" />
+                <DropdownMenuItem render={<Link href="/dashboard/settings" />} className="cursor-pointer focus:bg-secondary">
+                  <User className="mr-2 size-4 text-muted-foreground" />
+                  <span>Account Settings</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-border/50" />
+                <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive">
+                  <LogOut className="mr-2 size-4" />
+                  <span>Log out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </ShadcnSidebar>
   );
 }

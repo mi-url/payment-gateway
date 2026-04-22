@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     const keyBytes = hexToBytes(encKeyHex);
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
-      keyBytes,
+      keyBytes.buffer as ArrayBuffer,
       { name: "AES-GCM" },
       false, // not extractable
       ["encrypt"]
