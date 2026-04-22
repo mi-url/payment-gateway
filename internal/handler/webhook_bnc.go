@@ -7,9 +7,17 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/faloppa/payment-gateway/internal/bank/bnc"
 )
+
+// maxWebhookBodySize limits webhook request bodies to 64KB (BNC notifications are ~500 bytes).
+const maxWebhookBodySize = 65_536
+
+// maxProcessedRefs is the maximum number of dedup references kept in memory.
+// When exceeded, the oldest half is evicted. In production, replace with DB-backed store.
+const maxProcessedRefs = 100_000
 
 // WebhookBNCHandler handles POST /v1/webhooks/bnc requests.
 // BNC sends push notifications here when payments are received (P2P, TRF, DEP).
@@ -24,7 +32,7 @@ type WebhookBNCHandler struct {
 	webhookAPIKey string
 	// processedRefs tracks BNC references already handled to prevent
 	// duplicate processing. In production, replace with DB-backed store.
-	processedRefs map[string]bool
+	processedRefs map[string]time.Time
 	mu            sync.Mutex
 }
 
@@ -32,11 +40,14 @@ type WebhookBNCHandler struct {
 // webhookAPIKey is the secret shared with BNC during onboarding; it will
 // arrive in the x-api-key header of every notification.
 func NewWebhookBNCHandler(logger *slog.Logger, webhookAPIKey string) *WebhookBNCHandler {
-	return &WebhookBNCHandler{
+	h := &WebhookBNCHandler{
 		logger:        logger,
 		webhookAPIKey: webhookAPIKey,
-		processedRefs: make(map[string]bool),
+		processedRefs: make(map[string]time.Time),
 	}
+	// Start background cleanup goroutine to evict refs older than 24 hours.
+	go h.cleanupLoop()
+	return h
 }
 
 // ServeHTTP handles BNC notification push webhooks.
@@ -53,6 +64,9 @@ func (h *WebhookBNCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	// Limit request body to 64KB to prevent DoS.
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
 
 	// Read the body.
 	body, err := io.ReadAll(r.Body)
@@ -82,9 +96,9 @@ func (h *WebhookBNCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Build a dedup key from the origin bank reference + amount.
 	dedupKey := notif.OriginBankReference + ":" + notif.DestinyBankReference + ":" + notif.Amount
 	h.mu.Lock()
-	alreadyProcessed := h.processedRefs[dedupKey]
+	_, alreadyProcessed := h.processedRefs[dedupKey]
 	if !alreadyProcessed {
-		h.processedRefs[dedupKey] = true
+		h.processedRefs[dedupKey] = time.Now()
 	}
 	h.mu.Unlock()
 
@@ -126,6 +140,33 @@ func (h *WebhookBNCHandler) processNotification(notif *bnc.WebhookNotification) 
 	// 2. Verify amount matches
 	// 3. Update status to SUCCESS
 	// 4. Notify merchant via webhook_url
+}
+
+// cleanupLoop runs every hour to evict dedup references older than 24 hours.
+// This prevents the processedRefs map from growing infinitely in memory.
+func (h *WebhookBNCHandler) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		h.mu.Lock()
+		now := time.Now()
+		evicted := 0
+		for key, ts := range h.processedRefs {
+			if now.Sub(ts) > 24*time.Hour {
+				delete(h.processedRefs, key)
+				evicted++
+			}
+		}
+		h.mu.Unlock()
+
+		if evicted > 0 {
+			h.logger.Info("webhook: evicted stale dedup references",
+				slog.Int("evicted", evicted),
+				slog.Int("remaining", len(h.processedRefs)),
+			)
+		}
+	}
 }
 
 // maskKey returns a masked version of an API key for safe logging.

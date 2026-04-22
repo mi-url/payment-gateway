@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/faloppa/payment-gateway/internal/bank"
-	"github.com/shopspring/decimal"
 	"github.com/faloppa/payment-gateway/internal/crypto"
 	"github.com/faloppa/payment-gateway/internal/model"
 	"github.com/faloppa/payment-gateway/internal/store"
@@ -19,29 +18,32 @@ import (
 )
 
 // ChargeService orchestrates the full C2P charge flow:
-// validate → create transaction → decrypt credentials → call bank → update status.
+// validate → check subscription → create transaction → decrypt credentials → call bank → update status.
 type ChargeService struct {
-	txnStore    *store.TransactionStore
-	cfgStore    *store.BankConfigStore
-	registry    *bank.Registry
-	encryptor   *crypto.EnvelopeEncryptor
-	logger      *slog.Logger
+	txnStore      *store.TransactionStore
+	cfgStore      *store.BankConfigStore
+	merchantStore *store.MerchantStore
+	registry      *bank.Registry
+	encryptor     *crypto.EnvelopeEncryptor
+	logger        *slog.Logger
 }
 
 // NewChargeService creates a ChargeService with all required dependencies.
 func NewChargeService(
 	txnStore *store.TransactionStore,
 	cfgStore *store.BankConfigStore,
+	merchantStore *store.MerchantStore,
 	registry *bank.Registry,
 	encryptor *crypto.EnvelopeEncryptor,
 	logger *slog.Logger,
 ) *ChargeService {
 	return &ChargeService{
-		txnStore:  txnStore,
-		cfgStore:  cfgStore,
-		registry:  registry,
-		encryptor: encryptor,
-		logger:    logger,
+		txnStore:      txnStore,
+		cfgStore:      cfgStore,
+		merchantStore: merchantStore,
+		registry:      registry,
+		encryptor:     encryptor,
+		logger:        logger,
 	}
 }
 
@@ -54,6 +56,15 @@ func NewChargeService(
 //  5. Map the bank response to a final status (SUCCESS/DECLINED/etc).
 //  6. Return a standardized response to the client.
 func (s *ChargeService) ProcessC2P(ctx context.Context, merchantID uuid.UUID, req *model.C2PChargeRequest) (*model.C2PChargeResponse, error) {
+	// Step 0: Verify merchant subscription is active.
+	merchant, err := s.merchantStore.FindByID(ctx, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load merchant: %w", err)
+	}
+	if merchant.SaaSSubscriptionStatus != "active" {
+		return nil, fmt.Errorf("merchant subscription is not active (status: %s)", merchant.SaaSSubscriptionStatus)
+	}
+
 	// Step 1: Resolve bank adapter.
 	adapter, err := s.registry.Get(req.Payer.BankCode)
 	if err != nil {
@@ -83,7 +94,7 @@ func (s *ChargeService) ProcessC2P(ctx context.Context, merchantID uuid.UUID, re
 	s.logger.Info("transaction created",
 		slog.String("txn_id", txn.ID.String()),
 		slog.String("bank_code", txn.BankCode),
-		slog.Float64("amount", txn.Amount),
+		slog.String("amount", txn.Amount.StringFixed(2)),
 	)
 
 	// Step 3: Load and decrypt merchant bank credentials.
@@ -108,7 +119,7 @@ func (s *ChargeService) ProcessC2P(ctx context.Context, merchantID uuid.UUID, re
 	}
 
 	bankReq := &bank.C2PRequest{
-		Amount:        fromFloat(req.Amount),
+		Amount:        req.Amount,
 		PayerBankCode: req.Payer.BankCode,
 		PayerPhone:    req.Payer.Phone,
 		PayerIDDoc:    req.Payer.IDDocument,
@@ -136,7 +147,14 @@ func (s *ChargeService) ProcessC2P(ctx context.Context, merchantID uuid.UUID, re
 
 // succeedTransaction marks a transaction as SUCCESS with the bank reference.
 func (s *ChargeService) succeedTransaction(ctx context.Context, txn *model.Transaction, bankRef string) (*model.C2PChargeResponse, error) {
-	s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusSuccess, bankRef, "", "")
+	if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusSuccess, bankRef, "", ""); err != nil {
+		s.logger.Error("CRITICAL: bank charged successfully but failed to record SUCCESS in DB",
+			slog.String("txn_id", txn.ID.String()),
+			slog.String("bank_ref", bankRef),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("failed to record successful transaction: %w", err)
+	}
 	return &model.C2PChargeResponse{
 		ID:            txn.ID.String(),
 		Status:        model.StatusSuccess,
@@ -149,7 +167,12 @@ func (s *ChargeService) succeedTransaction(ctx context.Context, txn *model.Trans
 
 // declineTransaction marks a transaction as DECLINED with error details.
 func (s *ChargeService) declineTransaction(ctx context.Context, txn *model.Transaction, errCode, errMsg, bankCode string) (*model.C2PChargeResponse, error) {
-	s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusDeclined, "", errCode, errMsg)
+	if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusDeclined, "", errCode, errMsg); err != nil {
+		s.logger.Error("failed to record DECLINED status in DB",
+			slog.String("txn_id", txn.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 	return &model.C2PChargeResponse{
 		ID:        txn.ID.String(),
 		Status:    model.StatusDeclined,
@@ -162,7 +185,12 @@ func (s *ChargeService) declineTransaction(ctx context.Context, txn *model.Trans
 
 // pendingTransaction marks a transaction as PENDING_RECONCILIATION for background resolution.
 func (s *ChargeService) pendingTransaction(ctx context.Context, txn *model.Transaction) (*model.C2PChargeResponse, error) {
-	s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusPendingReconciliation, "", "", "")
+	if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusProcessing, model.StatusPendingReconciliation, "", "", ""); err != nil {
+		s.logger.Error("failed to record PENDING_RECONCILIATION status in DB",
+			slog.String("txn_id", txn.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 	return &model.C2PChargeResponse{
 		ID:        txn.ID.String(),
 		Status:    model.StatusPendingReconciliation,
@@ -175,7 +203,12 @@ func (s *ChargeService) pendingTransaction(ctx context.Context, txn *model.Trans
 // failTransaction marks a transaction as DECLINED due to an internal error
 // (e.g., missing config, decryption failure) before reaching the bank.
 func (s *ChargeService) failTransaction(ctx context.Context, txn *model.Transaction, errCode, errMsg, bankCode string) (*model.C2PChargeResponse, error) {
-	s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusInitiated, model.StatusDeclined, "", errCode, errMsg)
+	if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusInitiated, model.StatusDeclined, "", errCode, errMsg); err != nil {
+		s.logger.Error("failed to record DECLINED status in DB",
+			slog.String("txn_id", txn.ID.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 	return &model.C2PChargeResponse{
 		ID:       txn.ID.String(),
 		Status:   model.StatusDeclined,
@@ -202,9 +235,4 @@ func obfuscateID(id string) string {
 		return id
 	}
 	return id[:1] + "***" + id[len(id)-4:]
-}
-
-// fromFloat converts float64 to decimal for the bank adapter.
-func fromFloat(f float64) decimal.Decimal {
-	return decimal.NewFromFloat(f)
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/faloppa/payment-gateway/internal/crypto"
 	"github.com/faloppa/payment-gateway/internal/model"
 	"github.com/faloppa/payment-gateway/internal/store"
-	"github.com/shopspring/decimal"
 )
 
 // ReconciliationService resolves transactions stuck in PENDING_RECONCILIATION.
@@ -128,7 +127,7 @@ func (s *ReconciliationService) reconcileOne(ctx context.Context, txn *model.Tra
 	result, err := adapter.QueryTransaction(
 		ctx,
 		txn.IdempotencyKey,
-		decimal.NewFromFloat(txn.Amount),
+		txn.Amount,
 		txn.InitiatedAt,
 		json.RawMessage(credsPlaintext),
 	)
@@ -141,12 +140,24 @@ func (s *ReconciliationService) reconcileOne(ctx context.Context, txn *model.Tra
 	}
 
 	if result.Exists {
-		s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusPendingReconciliation, model.StatusSuccess, "", "", "")
+		if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusPendingReconciliation, model.StatusSuccess, "", "", ""); err != nil {
+			s.logger.Error("reconciliation: failed to update transaction to SUCCESS",
+				slog.String("txn_id", txn.ID.String()),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
 		s.logger.Info("reconciliation: transaction confirmed as SUCCESS",
 			slog.String("txn_id", txn.ID.String()),
 		)
 	} else {
-		s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusPendingReconciliation, model.StatusDeclined, "", "NOT_FOUND", "Transaction not found at bank after reconciliation")
+		if err := s.txnStore.UpdateStatus(ctx, txn.ID, model.StatusPendingReconciliation, model.StatusDeclined, "", "NOT_FOUND", "Transaction not found at bank after reconciliation"); err != nil {
+			s.logger.Error("reconciliation: failed to update transaction to DECLINED",
+				slog.String("txn_id", txn.ID.String()),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
 		s.logger.Info("reconciliation: transaction confirmed as DECLINED",
 			slog.String("txn_id", txn.ID.String()),
 		)

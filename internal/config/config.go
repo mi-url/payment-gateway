@@ -27,6 +27,9 @@ type Config struct {
 	// BNC webhook authentication — shared secret sent in x-api-key header.
 	// Agreed upon during BNC onboarding/certification process.
 	BNCWebhookAPIKey string
+
+	// CORS — allowed origin for dashboard requests.
+	CORSAllowedOrigin string
 }
 
 // Load reads configuration from environment variables and validates them.
@@ -70,6 +73,11 @@ func Load() (*Config, error) {
 
 	bncWebhookKey := os.Getenv("BNC_WEBHOOK_API_KEY")
 
+	corsOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if corsOrigin == "" {
+		corsOrigin = "http://localhost:3001"
+	}
+
 	return &Config{
 		Port:                port,
 		Env:                 env,
@@ -77,6 +85,7 @@ func Load() (*Config, error) {
 		KMSKeyResourceName:  kmsKey,
 		BNCBaseURL:          bncBaseURL,
 		BNCWebhookAPIKey:    bncWebhookKey,
+		CORSAllowedOrigin:   corsOrigin,
 	}, nil
 }
 

@@ -10,6 +10,7 @@ import (
 // RateLimit applies a simple per-IP token bucket rate limiter.
 // Limits each IP to maxRequests per window duration.
 // Returns 429 Too Many Requests when the limit is exceeded.
+// Expired entries are cleaned up automatically to prevent memory leaks.
 func RateLimit(maxRequests int, window time.Duration) func(http.Handler) http.Handler {
 	type client struct {
 		tokens    int
@@ -18,6 +19,22 @@ func RateLimit(maxRequests int, window time.Duration) func(http.Handler) http.Ha
 
 	var mu sync.Mutex
 	clients := make(map[string]*client)
+
+	// Background cleanup: evict clients that haven't been seen for 2 windows.
+	go func() {
+		ticker := time.NewTicker(window)
+		defer ticker.Stop()
+		for range ticker.C {
+			mu.Lock()
+			cutoff := time.Now().Add(-2 * window)
+			for ip, c := range clients {
+				if c.lastReset.Before(cutoff) {
+					delete(clients, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -45,7 +45,14 @@ func (a *Adapter) BankCode() string {
 
 // ProcessC2P executes a Cobro a Persona charge against BNC's API.
 // It handles WorkingKey management, encryption, and error code mapping.
+// If BNC returns EPIRWK (key expired), it retries exactly once with a fresh key.
 func (a *Adapter) ProcessC2P(ctx context.Context, req *bank.C2PRequest, credsJSON json.RawMessage) (*bank.Response, error) {
+	return a.processC2PInternal(ctx, req, credsJSON, false)
+}
+
+// processC2PInternal is the actual C2P implementation with a retry guard.
+// The retried flag ensures we never retry more than once (prevents infinite recursion).
+func (a *Adapter) processC2PInternal(ctx context.Context, req *bank.C2PRequest, credsJSON json.RawMessage, retried bool) (*bank.Response, error) {
 	var creds BNCCredentials
 	if err := json.Unmarshal(credsJSON, &creds); err != nil {
 		return nil, fmt.Errorf("bnc: failed to parse credentials: %w", err)
@@ -58,7 +65,16 @@ func (a *Adapter) ProcessC2P(ctx context.Context, req *bank.C2PRequest, credsJSO
 	}
 
 	// Build the C2P payload.
-	amount, _ := req.Amount.Float64()
+	// Note: BNC's JSON protocol requires numeric amounts. We convert from
+	// decimal to float64 here at the protocol boundary. For amounts within
+	// normal range (< 10^15), float64 preserves 2-decimal precision.
+	amount, exact := req.Amount.Float64()
+	if !exact {
+		a.logger.Warn("bnc: amount conversion to float64 is inexact",
+			slog.String("original", req.Amount.String()),
+			slog.Float64("converted", amount),
+		)
+	}
 	payload := C2PPayload{
 		DebtorBankCode:  req.PayerBankCode,
 		DebtorCellPhone: normalizePhone(req.PayerPhone),
@@ -85,16 +101,15 @@ func (a *Adapter) ProcessC2P(ctx context.Context, req *bank.C2PRequest, credsJSO
 		}, nil
 	}
 
-	// Check for WorkingKey expiration.
-	if resp.Status == "KO" && len(resp.Message) >= 6 {
-		code := resp.Message[:6]
-		if IsWorkingKeyExpired(strings.TrimSpace(code)) {
+	// Check for WorkingKey expiration — retry at most once.
+	if resp.Status == "KO" && !retried {
+		code := extractErrorCode(resp.Message)
+		if IsWorkingKeyExpired(code) {
 			a.keyMgr.Invalidate(creds.ClientGUID)
 			a.logger.Warn("bnc: working key expired, retrying with fresh key",
 				slog.String("client_guid", creds.ClientGUID),
 			)
-			// Retry once with a fresh WorkingKey.
-			return a.ProcessC2P(ctx, req, credsJSON)
+			return a.processC2PInternal(ctx, req, credsJSON, true)
 		}
 	}
 
@@ -114,7 +129,12 @@ func (a *Adapter) QueryTransaction(ctx context.Context, ref string, amount decim
 		return nil, fmt.Errorf("bnc: failed to obtain working key: %w", err)
 	}
 
-	amtF, _ := amount.Float64()
+	amtF, exact := amount.Float64()
+	if !exact {
+		a.logger.Warn("bnc: query amount conversion to float64 is inexact",
+			slog.String("original", amount.String()),
+		)
+	}
 	payload := TransactionQueryPayload{
 		Reference: ref,
 		Amount:    amtF,
@@ -135,10 +155,9 @@ func (a *Adapter) QueryTransaction(ctx context.Context, ref string, amount decim
 		return nil, fmt.Errorf("bnc: query returned status KO: %s", resp.Message)
 	}
 
-	crypto := NewCrypto(workingKey)
-	decrypted, err := crypto.Decrypt(resp.Value)
+	decrypted, err := a.verifyAndDecrypt(resp, workingKey, "/Validation/TransactionQuery")
 	if err != nil {
-		return nil, fmt.Errorf("bnc: failed to decrypt query response: %w", err)
+		return nil, err
 	}
 
 	var qr TransactionQueryResponse
@@ -194,10 +213,9 @@ func (a *Adapter) logon(ctx context.Context, creds *BNCCredentials) (string, err
 		return "", fmt.Errorf("bnc logon: failed with status KO: %s", resp.Message)
 	}
 
-	crypto := NewCrypto(creds.MasterKey)
-	decrypted, err := crypto.Decrypt(resp.Value)
+	decrypted, err := a.verifyAndDecrypt(resp, creds.MasterKey, "/Auth/LogOn")
 	if err != nil {
-		return "", fmt.Errorf("bnc logon: failed to decrypt response: %w", err)
+		return "", fmt.Errorf("bnc logon: %w", err)
 	}
 
 	var logonResp LogonResponse
@@ -213,6 +231,8 @@ func (a *Adapter) logon(ctx context.Context, creds *BNCCredentials) (string, err
 }
 
 // sendEncrypted builds an encrypted BNC envelope and sends it to the specified endpoint.
+// It handles encryption of the request only. Response decryption and SHA-256 validation
+// are handled by callers via verifyAndDecrypt to avoid double-decryption.
 func (a *Adapter) sendEncrypted(ctx context.Context, endpoint, clientGUID, reference, encryptionKey, payloadJSON string) (*EnvelopeResponse, error) {
 	crypto := NewCrypto(encryptionKey)
 
@@ -257,34 +277,51 @@ func (a *Adapter) sendEncrypted(ctx context.Context, endpoint, clientGUID, refer
 		return nil, fmt.Errorf("bnc: failed to parse response (status %d): %w", resp.StatusCode, err)
 	}
 
-	// H3 FIX: Verify SHA-256 integrity of the response.
-	// The Validation field is the SHA-256 hex digest of the decrypted Value.
-	// If it doesn't match, the response may have been tampered with (MITM).
-	if envResp.Status == "OK" && envResp.Value != "" && envResp.Validation != "" {
-		decrypted, decErr := crypto.Decrypt(envResp.Value)
-		if decErr == nil {
-			expectedHash := HashSHA256(decrypted)
-			if expectedHash != envResp.Validation {
-				a.logger.Error("bnc: INTEGRITY CHECK FAILED — response Validation mismatch",
-					slog.String("endpoint", endpoint),
-					slog.String("expected", expectedHash),
-					slog.String("received", envResp.Validation),
-				)
-				return nil, fmt.Errorf("bnc: response integrity check failed (SHA-256 mismatch)")
-			}
+	return &envResp, nil
+}
+
+// verifyAndDecrypt decrypts the Value from a BNC response and verifies its
+// SHA-256 integrity against the Validation field. This is called by each
+// response handler with the correct decryption key (WorkingKey or MasterKey).
+func (a *Adapter) verifyAndDecrypt(resp *EnvelopeResponse, decryptionKey, endpoint string) (string, error) {
+	crypto := NewCrypto(decryptionKey)
+	decrypted, err := crypto.Decrypt(resp.Value)
+	if err != nil {
+		return "", fmt.Errorf("bnc: failed to decrypt response from %s: %w", endpoint, err)
+	}
+
+	// Verify SHA-256 integrity (MITM protection).
+	if resp.Validation != "" {
+		expectedHash := HashSHA256(decrypted)
+		if expectedHash != resp.Validation {
+			a.logger.Error("bnc: INTEGRITY CHECK FAILED — response Validation mismatch",
+				slog.String("endpoint", endpoint),
+				slog.String("expected", expectedHash),
+				slog.String("received", resp.Validation),
+			)
+			return "", fmt.Errorf("bnc: response integrity check failed (SHA-256 mismatch)")
 		}
 	}
 
-	return &envResp, nil
+	return decrypted, nil
+}
+
+// extractErrorCode safely extracts the BNC error code from a response message.
+// BNC error codes are the first 6 characters of the message (e.g., "EPIRWK", "G55   ").
+// Returns empty string if the message is too short.
+func extractErrorCode(message string) string {
+	if len(message) >= 6 {
+		return strings.TrimSpace(message[:6])
+	}
+	return strings.TrimSpace(message)
 }
 
 // parseC2PResponse interprets the BNC C2P response and maps it to the gateway format.
 func (a *Adapter) parseC2PResponse(resp *EnvelopeResponse, workingKey string) (*bank.Response, error) {
 	if resp.Status == "OK" {
-		crypto := NewCrypto(workingKey)
-		decrypted, err := crypto.Decrypt(resp.Value)
+		decrypted, err := a.verifyAndDecrypt(resp, workingKey, "/MobPayment/SendC2P")
 		if err != nil {
-			return nil, fmt.Errorf("bnc: failed to decrypt C2P response: %w", err)
+			return nil, err
 		}
 
 		var c2pResp C2PResponse
@@ -299,12 +336,8 @@ func (a *Adapter) parseC2PResponse(resp *EnvelopeResponse, workingKey string) (*
 		}, nil
 	}
 
-	// Extract error code from message (first 6 chars per BNC format).
-	errCode := ""
-	if len(resp.Message) >= 3 {
-		errCode = strings.TrimSpace(resp.Message[:6])
-	}
-
+	// Extract error code safely (no panic on short messages).
+	errCode := extractErrorCode(resp.Message)
 	gatewayErr := MapC2PError(errCode)
 
 	return &bank.Response{

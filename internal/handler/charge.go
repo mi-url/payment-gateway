@@ -47,6 +47,9 @@ func (h *ChargeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body to 1MB to prevent DoS via oversized payloads.
+	r.Body = http.MaxBytesReader(w, r.Body, 1_048_576)
+
 	// Parse and validate the charge request.
 	var req model.C2PChargeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -89,7 +92,7 @@ func (h *ChargeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // validateChargeRequest performs basic validation on the charge request fields.
 func validateChargeRequest(req *model.C2PChargeRequest) error {
-	if req.Amount <= 0 {
+	if req.Amount.IsZero() || req.Amount.IsNegative() {
 		return errValidation("amount must be greater than 0")
 	}
 	if req.Currency == "" {

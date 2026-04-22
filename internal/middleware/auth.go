@@ -4,7 +4,6 @@ package middleware
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -58,8 +57,3 @@ func hashAPIKey(key string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// ConstantTimeCompare performs a constant-time comparison of two strings
-// to prevent timing attacks on API key validation.
-func ConstantTimeCompare(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}

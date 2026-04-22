@@ -81,7 +81,7 @@ func main() {
 	logger.Info("bank adapters registered", slog.Any("banks", registry.RegisteredBanks()))
 
 	// Initialize services (business logic layer).
-	chargeService := service.NewChargeService(txnStore, cfgStore, registry, encryptor, logger)
+	chargeService := service.NewChargeService(txnStore, cfgStore, merchantStore, registry, encryptor, logger)
 
 	// Initialize reconciliation worker.
 	reconService := service.NewReconciliationService(txnStore, cfgStore, registry, encryptor, logger)
@@ -129,7 +129,7 @@ func main() {
 
 	// Apply global middleware.
 	var root http.Handler = mux
-	root = middleware.CORS("http://localhost:3001")(root)
+	root = middleware.CORS(cfg.CORSAllowedOrigin)(root)
 	root = middleware.RateLimit(100, time.Minute)(root)
 	root = middleware.Logging(logger)(root)
 

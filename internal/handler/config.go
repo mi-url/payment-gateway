@@ -54,6 +54,9 @@ func (h *BankConfigHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body to 1MB to prevent DoS via oversized payloads.
+	r.Body = http.MaxBytesReader(w, r.Body, 1_048_576)
+
 	// Parse request body.
 	var req bankConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

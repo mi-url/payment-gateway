@@ -1,11 +1,13 @@
 // Package model defines the core domain types for the payment gateway.
 package model
 
+import "github.com/shopspring/decimal"
+
 // C2PChargeRequest is the unified request format that all clients (SDKs, plugins,
 // direct API calls) send to initiate a Cobro a Persona (C2P) charge.
 // The gateway translates this into bank-specific formats via adapters.
 type C2PChargeRequest struct {
-	Amount         float64           `json:"amount" validate:"required,gt=0"`
+	Amount         decimal.Decimal   `json:"amount" validate:"required"`
 	Currency       string            `json:"currency" validate:"required,len=3"`
 	Payer          PayerInfo         `json:"payer" validate:"required"`
 	IdempotencyKey string            `json:"idempotency_key" validate:"required,max=255"`
@@ -27,7 +29,7 @@ type C2PChargeResponse struct {
 	ID            string            `json:"id"`
 	Status        TransactionStatus `json:"status"`
 	BankReference string            `json:"bank_reference,omitempty"`
-	Amount        float64           `json:"amount"`
+	Amount        decimal.Decimal   `json:"amount"`
 	Currency      string            `json:"currency"`
 	Error         *ChargeError      `json:"error,omitempty"`
 	CreatedAt     string            `json:"created_at"`

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/faloppa/payment-gateway/internal/middleware"
 	"github.com/faloppa/payment-gateway/internal/store"
@@ -46,17 +45,16 @@ func (h *TransactionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract transaction ID from URL path.
-	// Expected format: /v1/transactions/{id}
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 4 {
+	// Extract transaction ID from URL path using Go 1.22+ ServeMux pattern.
+	txnIDStr := r.PathValue("id")
+	if txnIDStr == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "transaction ID is required in URL path",
 		})
 		return
 	}
 
-	txnID, err := uuid.Parse(parts[len(parts)-1])
+	txnID, err := uuid.Parse(txnIDStr)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid transaction ID format",

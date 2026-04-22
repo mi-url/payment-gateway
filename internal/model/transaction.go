@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 // TransactionStatus represents the state machine for payment processing.
@@ -61,7 +62,7 @@ type Transaction struct {
 	MerchantID     uuid.UUID         `json:"merchant_id" db:"merchant_id"`
 	IdempotencyKey string            `json:"idempotency_key" db:"idempotency_key"`
 	BankCode       string            `json:"bank_code" db:"bank_code"`
-	Amount         float64           `json:"amount" db:"amount"`
+	Amount         decimal.Decimal   `json:"amount" db:"amount"`
 	Currency       string            `json:"currency" db:"currency"`
 	PayerPhone     string            `json:"payer_phone,omitempty" db:"payer_phone"`
 	PayerIDDoc     string            `json:"payer_id_document,omitempty" db:"payer_id_document"`
