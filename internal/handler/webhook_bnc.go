@@ -56,7 +56,14 @@ func (h *WebhookBNCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// BNC sends the shared API key in the x-api-key header.
 	// Reject unauthenticated requests with 401 before reading the body.
 	incomingKey := r.Header.Get("x-api-key")
-	if h.webhookAPIKey != "" && incomingKey != h.webhookAPIKey {
+	if h.webhookAPIKey == "" {
+		// If no API key is configured, reject ALL webhook requests.
+		// This prevents accidentally accepting unauthenticated webhooks in production.
+		h.logger.Error("webhook: BNC_WEBHOOK_API_KEY is not configured — rejecting all webhooks")
+		http.Error(w, "Webhook not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if incomingKey != h.webhookAPIKey {
 		h.logger.Warn("webhook: rejected unauthenticated request",
 			slog.String("remote_addr", r.RemoteAddr),
 			slog.String("got_key", maskKey(incomingKey)),
