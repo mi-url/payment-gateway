@@ -257,6 +257,24 @@ func (a *Adapter) sendEncrypted(ctx context.Context, endpoint, clientGUID, refer
 		return nil, fmt.Errorf("bnc: failed to parse response (status %d): %w", resp.StatusCode, err)
 	}
 
+	// H3 FIX: Verify SHA-256 integrity of the response.
+	// The Validation field is the SHA-256 hex digest of the decrypted Value.
+	// If it doesn't match, the response may have been tampered with (MITM).
+	if envResp.Status == "OK" && envResp.Value != "" && envResp.Validation != "" {
+		decrypted, decErr := crypto.Decrypt(envResp.Value)
+		if decErr == nil {
+			expectedHash := HashSHA256(decrypted)
+			if expectedHash != envResp.Validation {
+				a.logger.Error("bnc: INTEGRITY CHECK FAILED — response Validation mismatch",
+					slog.String("endpoint", endpoint),
+					slog.String("expected", expectedHash),
+					slog.String("received", envResp.Validation),
+				)
+				return nil, fmt.Errorf("bnc: response integrity check failed (SHA-256 mismatch)")
+			}
+		}
+	}
+
 	return &envResp, nil
 }
 

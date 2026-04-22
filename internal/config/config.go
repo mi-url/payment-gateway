@@ -23,6 +23,10 @@ type Config struct {
 
 	// BNC-specific settings (QA vs Production)
 	BNCBaseURL string
+
+	// BNC webhook authentication — shared secret sent in x-api-key header.
+	// Agreed upon during BNC onboarding/certification process.
+	BNCWebhookAPIKey string
 }
 
 // Load reads configuration from environment variables and validates them.
@@ -64,12 +68,15 @@ func Load() (*Config, error) {
 		bncBaseURL = "https://servicios.bncenlinea.com:16500/api"
 	}
 
+	bncWebhookKey := os.Getenv("BNC_WEBHOOK_API_KEY")
+
 	return &Config{
 		Port:                port,
 		Env:                 env,
 		DatabaseURL:         dbURL,
 		KMSKeyResourceName:  kmsKey,
 		BNCBaseURL:          bncBaseURL,
+		BNCWebhookAPIKey:    bncWebhookKey,
 	}, nil
 }
 

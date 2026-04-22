@@ -92,7 +92,7 @@ func main() {
 	// Initialize handlers (HTTP layer).
 	chargeHandler := handler.NewChargeHandler(chargeService, logger)
 	txnHandler := handler.NewTransactionHandler(txnStore, logger)
-	webhookBNCHandler := handler.NewWebhookBNCHandler(logger)
+	webhookBNCHandler := handler.NewWebhookBNCHandler(logger, cfg.BNCWebhookAPIKey)
 	bankConfigHandler := handler.NewBankConfigHandler(cfgStore, encryptor, logger)
 
 	// Merchant lookup function for auth middleware.
