@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Building2, Mail, Lock, ArrowRight, Shield } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -14,16 +15,21 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    // TODO: Connect to Supabase Auth when credentials are configured.
-    // For now, simulate a login delay and redirect.
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      window.location.href = "/dashboard";
-    } catch {
-      setError("Invalid email or password. Please try again.");
-    } finally {
+    const supabase = createClient();
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError) {
+      setError(authError.message);
       setLoading(false);
+      return;
     }
+
+    // Successful login — redirect to dashboard.
+    // The middleware will handle session persistence.
+    window.location.href = "/dashboard";
   };
 
   return (

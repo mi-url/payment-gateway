@@ -10,7 +10,7 @@ import {
   XCircle,
   Clock,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 
 interface Transaction {
   id: string;

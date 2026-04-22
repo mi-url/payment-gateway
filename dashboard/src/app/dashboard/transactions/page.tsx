@@ -9,7 +9,7 @@ import {
   Search,
   Filter,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 
 interface Transaction {
   id: string;
