@@ -27,3 +27,6 @@ coverage.out
 .agent/
 .scratch/
 mockbnc
+
+# Internal audit log — never push to remote
+docs/CHANGELOG.md
