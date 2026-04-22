@@ -2,9 +2,9 @@
 package middleware
 
 import (
-	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // IdempotencyStore defines how idempotency results are persisted.
@@ -77,35 +77,68 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
+// idempotencyEntry holds a cached response and its creation timestamp for TTL eviction.
+type idempotencyEntry struct {
+	response  *CachedResponse
+	createdAt time.Time
+}
+
 // MemoryIdempotencyStore is an in-memory implementation for development and testing.
 // Production uses PostgreSQL via the store package.
+// Entries are automatically evicted after 24 hours to prevent unbounded memory growth.
 type MemoryIdempotencyStore struct {
 	mu    sync.RWMutex
-	cache map[string]*CachedResponse
+	cache map[string]*idempotencyEntry
 }
 
-// NewMemoryIdempotencyStore creates an in-memory idempotency store.
+// NewMemoryIdempotencyStore creates an in-memory idempotency store
+// with automatic background cleanup of entries older than 24 hours.
 func NewMemoryIdempotencyStore() *MemoryIdempotencyStore {
-	return &MemoryIdempotencyStore{
-		cache: make(map[string]*CachedResponse),
+	s := &MemoryIdempotencyStore{
+		cache: make(map[string]*idempotencyEntry),
 	}
+	go s.cleanupLoop()
+	return s
 }
 
-func (s *MemoryIdempotencyStore) key(merchantID, idempotencyKey string) string {
-	b, _ := json.Marshal([]string{merchantID, idempotencyKey})
-	return string(b)
+func (s *MemoryIdempotencyStore) compositeKey(merchantID, idempotencyKey string) string {
+	return merchantID + ":" + idempotencyKey
 }
 
 // Get retrieves a cached response.
 func (s *MemoryIdempotencyStore) Get(merchantID, idempotencyKey string) *CachedResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cache[s.key(merchantID, idempotencyKey)]
+	entry := s.cache[s.compositeKey(merchantID, idempotencyKey)]
+	if entry == nil {
+		return nil
+	}
+	return entry.response
 }
 
 // Set stores a response for future duplicate detection.
 func (s *MemoryIdempotencyStore) Set(merchantID, idempotencyKey string, response *CachedResponse) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache[s.key(merchantID, idempotencyKey)] = response
+	s.cache[s.compositeKey(merchantID, idempotencyKey)] = &idempotencyEntry{
+		response:  response,
+		createdAt: time.Now(),
+	}
+}
+
+// cleanupLoop evicts entries older than 24 hours every hour.
+func (s *MemoryIdempotencyStore) cleanupLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		cutoff := time.Now().Add(-24 * time.Hour)
+		for key, entry := range s.cache {
+			if entry.createdAt.Before(cutoff) {
+				delete(s.cache, key)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
