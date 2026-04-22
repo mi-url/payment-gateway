@@ -67,10 +67,17 @@ func main() {
 	// In development mode, use MockKMS. In production, use GCP Cloud KMS.
 	var kmsClient crypto.KMSClient
 	if cfg.IsProduction() {
-		logger.Warn("production KMS not yet implemented, using MockKMS — DO NOT USE WITH REAL CREDENTIALS")
-		kmsClient = crypto.NewMockKMS()
+		gkms, err := crypto.NewGCPCloudKMS(context.Background())
+		if err != nil {
+			logger.Error("failed to initialize GCP Cloud KMS", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		defer gkms.Close()
+		kmsClient = gkms
+		logger.Info("GCP Cloud KMS initialized", slog.String("key", cfg.KMSKeyResourceName))
 	} else {
 		kmsClient = crypto.NewMockKMS()
+		logger.Warn("using MockKMS — for development only")
 	}
 	encryptor := crypto.NewEnvelopeEncryptor(kmsClient, cfg.KMSKeyResourceName)
 

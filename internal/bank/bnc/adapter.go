@@ -267,7 +267,7 @@ func (a *Adapter) sendEncrypted(ctx context.Context, endpoint, clientGUID, refer
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5_242_880)) // 5MB max
 	if err != nil {
 		return nil, fmt.Errorf("bnc: failed to read response body: %w", err)
 	}

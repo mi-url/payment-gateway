@@ -66,6 +66,16 @@ func (h *ChargeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure the idempotency key in the body matches the header.
+	// The middleware uses the header for dedup; the service uses the body for DB storage.
+	// A mismatch would cause silent inconsistencies.
+	if headerKey := r.Header.Get("Idempotency-Key"); headerKey != "" && headerKey != req.IdempotencyKey {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "idempotency_key in body must match Idempotency-Key header",
+		})
+		return
+	}
+
 	// Process the charge.
 	resp, err := h.chargeService.ProcessC2P(r.Context(), merchantID, &req)
 	if err != nil {

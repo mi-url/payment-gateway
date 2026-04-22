@@ -33,7 +33,7 @@ const (
 // validTransitions defines the allowed state machine transitions.
 // Any transition not listed here is a programming error.
 var validTransitions = map[TransactionStatus][]TransactionStatus{
-	StatusInitiated:  {StatusProcessing},
+	StatusInitiated:  {StatusProcessing, StatusDeclined},
 	StatusProcessing: {StatusSuccess, StatusDeclined, StatusBankNetworkError, StatusPendingReconciliation},
 	// Terminal states: no further transitions allowed.
 	StatusSuccess:               {},

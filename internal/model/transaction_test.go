@@ -12,6 +12,7 @@ func TestValidTransitions(t *testing.T) {
 		to   TransactionStatus
 	}{
 		{StatusInitiated, StatusProcessing},
+		{StatusInitiated, StatusDeclined}, // pre-bank failures (missing config, decryption error)
 		{StatusProcessing, StatusSuccess},
 		{StatusProcessing, StatusDeclined},
 		{StatusProcessing, StatusBankNetworkError},
@@ -47,7 +48,6 @@ func TestInvalidTransitions(t *testing.T) {
 
 		// Cannot skip states.
 		{StatusInitiated, StatusSuccess},
-		{StatusInitiated, StatusDeclined},
 		{StatusInitiated, StatusPendingReconciliation},
 	}
 
