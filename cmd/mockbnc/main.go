@@ -169,7 +169,7 @@ func main() {
 
 	log.Printf("🏦 BNC Mock Server running on :%s", port)
 	log.Printf("   Master Key: %s", testMasterKey)
-	log.Printf("   Working Key: %s (rotates on Logon)")
+	log.Printf("   Working Key: %s (rotates on Logon)", testWorkingKey)
 	log.Printf("")
 	log.Printf("   POST /Auth/LogOn              → Returns WorkingKey")
 	log.Printf("   POST /MobPayment/SendC2P      → Simulates C2P charge")

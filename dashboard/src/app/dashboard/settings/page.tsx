@@ -87,7 +87,10 @@ export default function SettingsPage() {
 
   // Save BNC credentials — sends to Go Gateway for envelope encryption.
   // Until the Go Gateway is running, stores a placeholder marker in Supabase
-  // to track that the merchant has configured their BNC credentials.
+  // Sends credentials to the server-side API route for encryption.
+  // The browser NEVER touches encryption keys — plaintext credentials
+  // travel over HTTPS to the same-origin API route, which encrypts
+  // server-side with a key from env vars (not stored in Supabase).
   const handleSaveBNC = useCallback(async () => {
     if (!bncClientGUID.trim() || !bncMasterKey.trim()) {
       setBncStatus("error");
@@ -99,53 +102,26 @@ export default function SettingsPage() {
     setBncStatus("idle");
 
     try {
-      // In production, this POSTs to the Go Gateway at /v1/config/bank
-      // which performs envelope encryption before storing.
-      // For now, we store a configuration marker via Supabase.
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
-      if (!user) throw new Error("Not authenticated");
-
-      // Store encrypted placeholder (the real encryption happens in the Go Gateway)
-      const credentialPayload = JSON.stringify({
-        client_guid: bncClientGUID,
-        master_key: bncMasterKey,
+      const res = await fetch("/api/config/bank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bank_code: "0191",
+          credentials: {
+            client_guid: bncClientGUID,
+            master_key: bncMasterKey,
+          },
+        }),
       });
 
-      // Use Web Crypto API to generate a local encryption for transit
-      const encoder = new TextEncoder();
-      const key = await crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt"]
-      );
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const encrypted = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encoder.encode(credentialPayload)
-      );
+      const data = await res.json();
 
-      const exportedKey = await crypto.subtle.exportKey("raw", key);
-
-      // Store in Supabase (encrypted at rest + in transit)
-      const { error } = await supabase.from("merchant_bank_configs").upsert(
-        {
-          merchant_id: user.id,
-          bank_code: "0191",
-          encrypted_credentials: Array.from(new Uint8Array(encrypted)),
-          kms_data_key_ciphertext: Array.from(new Uint8Array(exportedKey)),
-          encryption_iv: Array.from(iv),
-          is_active: true,
-        },
-        { onConflict: "merchant_id,bank_code" }
-      );
-
-      if (error) throw error;
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save credentials");
+      }
 
       setBncStatus("success");
-      setBncMessage("BNC credentials saved and encrypted.");
+      setBncMessage("BNC credentials encrypted server-side and saved.");
       setBncConfigExists(true);
       setBncClientGUID("");
       setBncMasterKey("");

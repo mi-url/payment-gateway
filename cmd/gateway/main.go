@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/faloppa/payment-gateway/internal/bank"
 	"github.com/faloppa/payment-gateway/internal/bank/bnc"
@@ -41,7 +41,7 @@ func main() {
 	}
 
 	// Connect to PostgreSQL (Supabase).
-	db, err := sql.Open("postgres", cfg.DatabaseURL)
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to open database connection", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -111,11 +111,14 @@ func main() {
 	mux.HandleFunc("GET /health", handler.Health)
 	mux.Handle("POST /v1/webhooks/bnc", webhookBNCHandler)
 
-	// Authenticated endpoints.
+	// Dashboard-facing endpoint (Supabase JWT auth via Authorization header).
+	// The bank config handler extracts merchant_id from the JWT subject.
+	mux.Handle("POST /v1/config/bank", middleware.Auth(authLookup)(bankConfigHandler))
+
+	// Authenticated endpoints (API key auth for programmatic access).
 	authed := http.NewServeMux()
 	authed.Handle("POST /v1/charges/c2p", chargeHandler)
 	authed.Handle("GET /v1/transactions/{id}", txnHandler)
-	authed.Handle("POST /v1/config/bank", bankConfigHandler)
 
 	// Apply auth + idempotency middleware to authenticated routes.
 	idempotencyStore := middleware.NewMemoryIdempotencyStore()
@@ -126,6 +129,7 @@ func main() {
 
 	// Apply global middleware.
 	var root http.Handler = mux
+	root = middleware.CORS("http://localhost:3001")(root)
 	root = middleware.RateLimit(100, time.Minute)(root)
 	root = middleware.Logging(logger)(root)
 
