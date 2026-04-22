@@ -246,7 +246,7 @@ export default function TransactionsPage() {
           />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v ?? 'all')}>
             <SelectTrigger className="w-[140px] h-9 bg-card/50 backdrop-blur-sm border-border/50">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -259,7 +259,7 @@ export default function TransactionsPage() {
               <SelectItem value="BANK_NETWORK_ERROR">Network Error</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={bankFilter} onValueChange={setBankFilter}>
+          <Select value={bankFilter} onValueChange={(v) => setBankFilter(v ?? 'all')}>
             <SelectTrigger className="w-[140px] h-9 bg-card/50 backdrop-blur-sm border-border/50">
               <SelectValue placeholder="Bank" />
             </SelectTrigger>

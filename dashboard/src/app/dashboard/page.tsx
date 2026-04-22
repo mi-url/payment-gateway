@@ -224,7 +224,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2">
           <div className="flex items-center bg-card/50 backdrop-blur-sm border border-border/50 rounded-md px-1 py-1">
             <Calendar className="w-4 h-4 text-muted-foreground ml-2 mr-1" />
-            <Select value={timeRange} onValueChange={setTimeRange} disabled={loading}>
+            <Select value={timeRange} onValueChange={(v) => setTimeRange(v ?? '7d')} disabled={loading}>
               <SelectTrigger className="w-[130px] border-0 bg-transparent h-8 shadow-none focus:ring-0">
                 <SelectValue placeholder="Select Range" />
               </SelectTrigger>
@@ -319,7 +319,7 @@ export default function DashboardPage() {
                     <Tooltip
                       contentStyle={{ backgroundColor: 'var(--card)', borderColor: 'var(--border)', borderRadius: '8px' }}
                       itemStyle={{ color: 'var(--foreground)', fontWeight: 'bold' }}
-                      formatter={(value: number) => [formatBs(value), "Revenue"]}
+                      formatter={(value) => [formatBs(Number(value ?? 0)), "Revenue"]}
                     />
                     <Area
                       type="monotone"
