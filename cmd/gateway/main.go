@@ -93,6 +93,7 @@ func main() {
 	chargeHandler := handler.NewChargeHandler(chargeService, logger)
 	txnHandler := handler.NewTransactionHandler(txnStore, logger)
 	webhookBNCHandler := handler.NewWebhookBNCHandler(logger)
+	bankConfigHandler := handler.NewBankConfigHandler(cfgStore, encryptor, logger)
 
 	// Merchant lookup function for auth middleware.
 	authLookup := func(ctx context.Context, apiKeyHash string) (string, bool) {
@@ -114,6 +115,7 @@ func main() {
 	authed := http.NewServeMux()
 	authed.Handle("POST /v1/charges/c2p", chargeHandler)
 	authed.Handle("GET /v1/transactions/{id}", txnHandler)
+	authed.Handle("POST /v1/config/bank", bankConfigHandler)
 
 	// Apply auth + idempotency middleware to authenticated routes.
 	idempotencyStore := middleware.NewMemoryIdempotencyStore()

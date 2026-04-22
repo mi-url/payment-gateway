@@ -51,3 +51,38 @@ func (s *BankConfigStore) FindActive(ctx context.Context, merchantID uuid.UUID, 
 // ErrBankConfigNotFound indicates no active bank configuration exists
 // for the requested merchant and bank code combination.
 var ErrBankConfigNotFound = errors.New("no active bank configuration found for this merchant and bank code")
+
+// Upsert stores encrypted bank credentials for a merchant. If an active config
+// already exists for this merchant+bank, it is deactivated first (soft-replace).
+// The caller is responsible for encrypting credentials before calling this.
+func (s *BankConfigStore) Upsert(ctx context.Context, merchantID uuid.UUID, bankCode string, encCreds, sealedDEK, iv []byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Deactivate any existing active config for this merchant+bank.
+	_, err = tx.ExecContext(ctx,
+		`UPDATE merchant_bank_configs SET is_active = false
+		 WHERE merchant_id = $1 AND bank_code = $2 AND is_active = true`,
+		merchantID, bankCode,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Insert the new active config.
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO merchant_bank_configs
+		 (merchant_id, bank_code, encrypted_credentials, kms_data_key_ciphertext, encryption_iv)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		merchantID, bankCode, encCreds, sealedDEK, iv,
+	)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
