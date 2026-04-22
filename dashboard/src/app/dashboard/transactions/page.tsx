@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   XCircle,
@@ -6,31 +9,88 @@ import {
   Search,
   Filter,
 } from "lucide-react";
+import { createClient } from "@/lib/supabase";
 
-// Mock transaction data — in production, fetched from Gateway API.
-const transactions = [
-  { id: "txn_a1b2c3d4", amount: 2500.0, currency: "VES", status: "SUCCESS", bank: "BNC (0191)", payerPhone: "0414***4567", reference: "123456789012", time: "2026-04-21 08:30:12" },
-  { id: "txn_e5f6g7h8", amount: 800.0, currency: "VES", status: "SUCCESS", bank: "BNC (0191)", payerPhone: "0412***8901", reference: "234567890123", time: "2026-04-21 08:25:44" },
-  { id: "txn_i9j0k1l2", amount: 15000.0, currency: "VES", status: "DECLINED", bank: "BNC (0191)", payerPhone: "0416***2345", reference: "—", time: "2026-04-21 08:20:33", error: "INCORRECT_OTP" },
-  { id: "txn_m3n4o5p6", amount: 3200.0, currency: "VES", status: "SUCCESS", bank: "BNC (0191)", payerPhone: "0424***6789", reference: "345678901234", time: "2026-04-21 08:15:17" },
-  { id: "txn_q7r8s9t0", amount: 450.0, currency: "VES", status: "PENDING_RECONCILIATION", bank: "BNC (0191)", payerPhone: "0414***0123", reference: "—", time: "2026-04-21 08:10:05" },
-  { id: "txn_u1v2w3x4", amount: 7800.0, currency: "VES", status: "SUCCESS", bank: "BNC (0191)", payerPhone: "0412***4567", reference: "456789012345", time: "2026-04-21 07:58:22" },
-  { id: "txn_y5z6a7b8", amount: 1250.0, currency: "VES", status: "SUCCESS", bank: "BNC (0191)", payerPhone: "0416***8901", reference: "567890123456", time: "2026-04-21 07:45:11" },
-  { id: "txn_c9d0e1f2", amount: 22000.0, currency: "VES", status: "DECLINED", bank: "BNC (0191)", payerPhone: "0424***2345", reference: "—", time: "2026-04-21 07:30:59", error: "INSUFFICIENT_FUNDS" },
-];
+interface Transaction {
+  id: string;
+  idempotency_key: string;
+  amount: number;
+  currency: string;
+  status: string;
+  bank_code: string;
+  payer_phone: string | null;
+  payer_id_document: string | null;
+  bank_reference: string | null;
+  error_code: string | null;
+  initiated_at: string;
+}
 
 const statusConfig: Record<string, { color: string; bg: string; icon: React.ElementType }> = {
   SUCCESS: { color: "var(--success)", bg: "rgba(16,185,129,0.1)", icon: CheckCircle2 },
   DECLINED: { color: "var(--danger)", bg: "rgba(239,68,68,0.1)", icon: XCircle },
   PENDING_RECONCILIATION: { color: "var(--pending)", bg: "rgba(59,130,246,0.1)", icon: Clock },
   PROCESSING: { color: "var(--warning)", bg: "rgba(245,158,11,0.1)", icon: Activity },
+  INITIATED: { color: "var(--text-muted)", bg: "rgba(148,163,184,0.1)", icon: Clock },
+  BANK_NETWORK_ERROR: { color: "var(--danger)", bg: "rgba(239,68,68,0.1)", icon: XCircle },
+};
+
+const bankNames: Record<string, string> = {
+  "0191": "BNC (0191)",
+  "0105": "Mercantil (0105)",
+  "0134": "Banesco (0134)",
+  "0102": "Venezuela (0102)",
+  "0172": "Bancamiga (0172)",
 };
 
 function formatAmount(amount: number): string {
   return `Bs. ${amount.toLocaleString("es-VE", { minimumFractionDigits: 2 })}`;
 }
 
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleString("es-VE", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export default function TransactionsPage() {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    async function fetchData() {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("transactions")
+        .select("*")
+        .order("initiated_at", { ascending: false });
+
+      if (!error && data) {
+        setTransactions(data);
+      }
+      setLoading(false);
+    }
+    fetchData();
+  }, []);
+
+  // Client-side search filter
+  const filtered = transactions.filter((txn) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      txn.idempotency_key.toLowerCase().includes(q) ||
+      (txn.payer_phone && txn.payer_phone.includes(q)) ||
+      (txn.bank_reference && txn.bank_reference.includes(q)) ||
+      txn.status.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="max-w-7xl">
       {/* Header */}
@@ -38,11 +98,13 @@ export default function TransactionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Transactions</h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            View and filter all payment transactions.
+            {loading
+              ? "Loading from Supabase..."
+              : `${transactions.length} transactions · ${filtered.length} shown`}
           </p>
         </div>
         <button
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors cursor-pointer"
           style={{ background: "var(--accent)" }}
         >
           <Filter size={14} />
@@ -57,9 +119,12 @@ export default function TransactionsPage() {
           className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
         />
         <input
+          id="transactions-search"
           type="text"
           placeholder="Search by transaction ID, phone, or reference..."
-          className="w-full pl-10 pr-4 py-2.5 rounded-lg text-sm border border-[var(--border)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-10 pr-4 py-2.5 rounded-lg text-sm border border-[var(--border)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)] transition-colors cursor-text"
           style={{ background: "var(--bg-card)", color: "var(--text-primary)" }}
         />
       </div>
@@ -94,48 +159,73 @@ export default function TransactionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
-              {transactions.map((txn) => {
-                const config = statusConfig[txn.status] || statusConfig.PROCESSING;
-                return (
-                  <tr
-                    key={txn.id}
-                    className="hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-                  >
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-mono text-[var(--text-primary)]">{txn.id}</p>
-                      <p className="text-xs text-[var(--text-muted)]">{txn.payerPhone}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-semibold text-[var(--text-primary)]">
-                        {formatAmount(txn.amount)}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
-                        style={{ color: config.color, background: config.bg }}
-                      >
-                        <config.icon size={12} />
-                        {txn.status.replace(/_/g, " ")}
-                      </span>
-                      {txn.error && (
-                        <p className="text-xs text-[var(--danger)] mt-0.5">{txn.error}</p>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-[var(--text-secondary)]">{txn.bank}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-mono text-[var(--text-secondary)]">
-                        {txn.reference}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-sm text-[var(--text-secondary)]">{txn.time}</p>
-                    </td>
-                  </tr>
-                );
-              })}
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center">
+                    <div className="w-6 h-6 border-2 border-[var(--accent)]/30 border-t-[var(--accent)] rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-sm text-[var(--text-muted)]">Loading transactions...</p>
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-8 text-center">
+                    <p className="text-sm text-[var(--text-muted)]">
+                      {searchQuery ? "No transactions match your search." : "No transactions yet."}
+                    </p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((txn) => {
+                  const config = statusConfig[txn.status] || statusConfig.PROCESSING;
+                  return (
+                    <tr
+                      key={txn.id}
+                      className="hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    >
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-mono text-[var(--text-primary)]">
+                          {txn.idempotency_key}
+                        </p>
+                        <p className="text-xs text-[var(--text-muted)]">
+                          {txn.payer_phone || "—"}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-semibold text-[var(--text-primary)]">
+                          {formatAmount(txn.amount)}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+                          style={{ color: config.color, background: config.bg }}
+                        >
+                          <config.icon size={12} />
+                          {txn.status.replace(/_/g, " ")}
+                        </span>
+                        {txn.error_code && (
+                          <p className="text-xs text-[var(--danger)] mt-0.5">{txn.error_code}</p>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm text-[var(--text-secondary)]">
+                          {bankNames[txn.bank_code] || txn.bank_code}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-mono text-[var(--text-secondary)]">
+                          {txn.bank_reference || "—"}
+                        </p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="text-sm text-[var(--text-secondary)]">
+                          {formatDate(txn.initiated_at)}
+                        </p>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
